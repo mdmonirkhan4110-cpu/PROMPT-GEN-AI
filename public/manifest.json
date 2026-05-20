@@ -1,0 +1,21 @@
+{
+  "name": "PROMPT GEN AI",
+  "short_name": "PromptGen",
+  "description": "AI-powered script generator for animation videos.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121215",
+  "theme_color": "#10b981",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2593/2593635.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2593/2593635.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
