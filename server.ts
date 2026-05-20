@@ -23,6 +23,9 @@ async function startServer() {
     next();
   });
 
+  // Keep track of any globally activated Gemini API key
+  let globalGeminiKey = "";
+
   // Helper to run a Gemini task with auto-retry and auto-rotation of up to 4 keys
   async function executeWithKeyRotation<T>(
     req: express.Request,
@@ -39,8 +42,9 @@ async function startServer() {
       return await task(ai);
     }
 
-    // 2. Otherwise load our 4 env keys (and the default one)
+    // 2. Otherwise load our global in-memory key and 4 env keys (and the default one)
     const envKeys = [
+      globalGeminiKey,
       process.env.GEMINI_API_KEY_1,
       process.env.GEMINI_API_KEY_2,
       process.env.GEMINI_API_KEY_3,
@@ -52,7 +56,7 @@ async function startServer() {
     const activePool = Array.from(new Set(envKeys)).filter(key => key !== "MY_GEMINI_API_KEY" && key !== "\"MY_GEMINI_API_KEY\"");
 
     if (activePool.length === 0) {
-      throw new Error("কোনো Gemini API Key খুঁজে পাওয়া যায়নি! দয়া করে AI Studio-এর Secrets প্যানেল থেকে GEMINI_API_KEY_1, GEMINI_API_KEY_2, GEMINI_API_KEY_3 অথবা GEMINI_API_KEY_4 সেট করুন।");
+      throw new Error("কোনো Gemini API Key খুঁজে পাওয়া যায়নি! অনুগ্রহ করে প্রথমবার অ্যাপটি ওপেন করে একটি Gemini API Key দিয়ে এটি সচল করুন।");
     }
 
     let lastError: any = null;
@@ -76,6 +80,31 @@ async function startServer() {
 
     throw lastError || new Error("আপনার সংযোজিত সবগুলো Gemini API Key ব্যর্থ হয়েছে।");
   }
+
+  // API Endpoint to check if a global key is active or if environment has keys
+  app.get("/api/global-key-status", (req, res) => {
+    const hasGlobal = !!globalGeminiKey;
+    const envKeysExist = [
+      process.env.GEMINI_API_KEY_1,
+      process.env.GEMINI_API_KEY_2,
+      process.env.GEMINI_API_KEY_3,
+      process.env.GEMINI_API_KEY_4,
+      process.env.GEMINI_API_KEY
+    ].some(k => k && k.trim() !== "" && k !== "MY_GEMINI_API_KEY" && k !== "\"MY_GEMINI_API_KEY\"");
+
+    res.json({ activated: hasGlobal || envKeysExist });
+  });
+
+  // API Endpoint to save a global key in memory
+  app.post("/api/save-global-key", (req, res) => {
+    const { key } = req.body;
+    if (key && typeof key === "string" && key.trim() !== "") {
+      globalGeminiKey = key.trim();
+      console.log(`Global activation successful! API Key starting with ${globalGeminiKey.substring(0,6)}... has been set dynamically.`);
+      return res.json({ success: true, message: "Successfully activated the server for everyone!" });
+    }
+    res.status(400).json({ error: "Invalid API Key format or key is empty" });
+  });
 
   // 1. API Endpoint to Analyze Story Plot & Define Characters
   app.post("/api/analyze-plot", async (req, res) => {
