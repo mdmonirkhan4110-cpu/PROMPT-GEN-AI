@@ -1,6 +1,6 @@
 {
-  "name": "Story Generator",
-  "short_name": "StoryGen",
+  "name": "PROMPT GEN AI",
+  "short_name": "PromptGen",
   "description": "AI-powered script generator for animation videos.",
   "start_url": "/",
   "display": "standalone",

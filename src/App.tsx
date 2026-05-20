@@ -214,269 +214,6 @@ const getCategoryTheme = (cat: string) => {
   }
 };
 
-const getApiUrl = (endpoint: string): string => {
-  // 1. Check if there is an override in localStorage
-  const savedApiUrl = localStorage.getItem('STORY_GENERATOR_API_URL');
-  if (savedApiUrl) {
-    let urlBase = savedApiUrl.trim();
-    if (urlBase && !/^https?:\/\//i.test(urlBase)) {
-      urlBase = `https://${urlBase}`;
-    }
-    return `${urlBase.replace(/\/$/, '')}${endpoint}`;
-  }
-  
-  // 2. Detect if origin is Netlify or any non-original custom host
-  const currentHost = window.location.hostname;
-  const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
-  
-  // If the user deployed to Netlify and didn't configure a proxy or wants robust direct queries:
-  if (!isOriginalHost && !window.location.port) {
-    const defaultBackendUrl = 'https://ais-pre-qeatm6ccr5dn35vzdkzq2w-88171425959.asia-southeast1.run.app';
-    return `${defaultBackendUrl}${endpoint}`;
-  }
-  
-  return endpoint;
-};
-
-// Client-Side Gemini Request runner (Allows 100% Free Serverless Netlify usage!)
-const runGeminiClientSide = async (apiKey: string, systemInstruction: string, prompt: string, isJson = true) => {
-  const modelName = 'gemini-2.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      systemInstruction: { parts: [{ text: systemInstruction }] },
-      generationConfig: isJson ? {
-        responseMimeType: "application/json",
-        temperature: 0.8
-      } : {
-        temperature: 0.8
-      }
-    })
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    let parsedErr: any;
-    try { parsedErr = JSON.parse(errText); } catch(e){}
-    const errMsg = parsedErr?.error?.message || errText || response.statusText;
-    throw new Error(`Google API returned error: ${errMsg}`);
-  }
-
-  const resJson = await response.json();
-  const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  if (!text) throw new Error("API-তে কোনো টেক্সট পাওয়া যায়নি।");
-  
-  if (isJson) {
-    const first = text.indexOf('{');
-    const last = text.lastIndexOf('}');
-    if (first === -1 || last === -1) {
-      throw new Error("রেসপন্স থেকে সঠিক তথ্য (JSON) ডিকোড করা যায়নি।");
-    }
-    const cleanCand = text.substring(first, last + 1).trim();
-    return JSON.parse(cleanCand);
-  }
-  return text;
-};
-
-// Client Side Handler for Analyze Story Plot
-const runAnalyzePlotClient = async (apiKey: string, storyInputVal: string, languageVal: string, categoryVal: string, durationVal: string) => {
-  const systemInstruction = `You are an Expert Story Consultant for a professional animation studio.
-Your task is to analyze the user's story idea and create a core plan for a ${durationVal} cartoon script.
-
-CRITICAL ANTI-PLAGIARISM & YouTube SAFETY RULE:
-- NEVER COPY exact sentences or specific branded details from the user's input.
-- THEME SIMILARITY: You MUST respect the "Core Spirit", "Theme", and "Plot Structure" of the user's story. If the user provides a specific moral or setting, stay SIMILAR to that intent.
-- TRANSFORMATIVE REWRITING: You MUST rewrite everything using your own creative voice. Think of this as "Re-imagining" or "Covering" the user's idea in a professional animation script style.
-- ORIGINALITY: Invent entirely NEW character names and unique dialogue to ensure the script is 100% unique for YouTube copyright systems.
-
-BENGALI DIALECT REQUIREMENT:
-- If the [LANGUAGE] is Bengali, generate content in a warm, natural "Village Dialect" (আঞ্চলিক বা গ্রাম্য বাংলা ভাষা) to make it sound authentic and engaging for folktales. Use colloquialisms and local expressive phrasing.
-
-PHASE 1: CHARACTER PROFILING
-- Define 2-4 core characters with entirely NEW, CREATIVE names and distinct personality traits.
-PHASE 2: PLOT MAPPING
-- Outline the story arc: Setup, Climax (Twist/High point), and Resolution.
-- Set the target pacing (Total words) for a ${durationVal} video.
-
-Return the output STRICTLY as a single, valid, parseable JSON object. No conversational filler.
-Fields must be in ${languageVal} (except for duration/metadata).
-
-TARGET JSON FORMAT:
-{
-  "plot_analysis": {
-    "theme": "...",
-    "target_tone": "...",
-    "climax_description": "..."
-  },
-  "character_profiles": [
-    { "name": "...", "trait": "...", "role": "..." }
-  ],
-  "pacing_plan": {
-    "total_words": "...",
-    "chapters_count": "..."
-  }
-}`;
-
-  const prompt = `Analyze the following story plot for a ${durationVal} animation:
-- [STORY_PLOT]: "${storyInputVal}"
-- [LANGUAGE]: "${languageVal}"
-- [CATEGORY]: "${categoryVal}"`;
-
-  return await runGeminiClientSide(apiKey, systemInstruction, prompt);
-};
-
-// Client Side Handler for Timeline Mapping
-const runMapTimelineClient = async (apiKey: string, storyInputVal: string, characterProfiles: any, plotAnalysis: any, durationVal: string, categoryVal: string, languageVal: string) => {
-  let expectedChapters = 3;
-  const cleanDuration = String(durationVal).toLowerCase().trim();
-  if (cleanDuration.includes("5") && !cleanDuration.includes("15") && !cleanDuration.includes("25")) {
-    expectedChapters = 3;
-  } else if (cleanDuration.includes("10")) {
-    expectedChapters = 5;
-  } else if (cleanDuration.includes("15")) {
-    expectedChapters = 7;
-  } else if (cleanDuration.includes("30")) {
-    expectedChapters = 13;
-  } else {
-    const parsedMin = parseInt(cleanDuration) || 5;
-    expectedChapters = Math.max(3, Math.round(parsedMin / 2.5));
-  }
-  const expectedParts = expectedChapters * 4;
-
-  const systemInstruction = `You are a Senior Script Supervisor and Master Story Outline Producer.
-Your task is to divide a ${durationVal} cartoon script into exactly ${expectedChapters} chapters, each containing exactly 4 parts (Total: ${expectedParts} parts).
-Your output must provide a "Detailed Story Outline" that serves as the blueprint for the final production.
-
-CRITICAL ANTI-PLAGIARISM & YouTube SAFETY MANDATE:
-- THEME ALIGNMENT: Stay SIMILAR to the user's provided story structure and themes.
-- ZERO DIRECT COPYING: Do not copy specific character names or exact phrases from the user's initial input.
-- TRANSFORMATIVE REWRITING: Use the user's input ONLY as a "Baseline Guide" to build a new, professionally scripted version. 
-- Ensure all plot beats are re-imagined creatively to prevent any copyright overlap while keeping the original "feel" of the story.
-
-PHASE: STORY OUTLINING
-- For each Chapter, define a title.
-- For each Part (1 to 4) within that Chapter, write a "detailed_outline" (approximately 50-70 words) describing the setting, character actions, emotional atmosphere, and specific visual beats.
-- Ensure the tone is cinematic and matches the [LANGUAGE].
-
-Input Context:
-- Plot Analysis: ${JSON.stringify(plotAnalysis)}
-- Characters: ${JSON.stringify(characterProfiles)}
-
-Return the output STRICTLY as a single, valid, parseable JSON object. No conversational filler.
-Fields must be in ${languageVal}.
-
-TARGET JSON FORMAT:
-{
-  "total_chapters": ${expectedChapters},
-  "total_scenes": ${expectedParts},
-  "chapters": [
-    {
-      "chapter_number": 1,
-      "chapter_title": "Chapter summary title",
-      "parts": [
-        { 
-          "part_number": 1, 
-          "part_title": "Brief part name", 
-          "detailed_outline": "Detailed descriptive outline of the scene (approx 60 words). Describe atmosphere, character movements, and key visual moments clearly." 
-        }
-      ]
-    }
-  ]
-}`;
-
-  const prompt = `Create a Master Story Outline for a ${durationVal} cartoon (${expectedChapters} chapters, ${expectedParts} parts) based on the plot: "${storyInputVal}". Ensure each part has a rich, detailed outline description.`;
-
-  return await runGeminiClientSide(apiKey, systemInstruction, prompt);
-};
-
-// Client Side Handler for script generation
-const runGenerateScriptClient = async (apiKey: string, storyInputVal: string, languageVal: string, formatVal: string, categoryVal: string, durationVal: string, storyOutline: any) => {
-  const formatRequirement = formatVal === 'Combined' 
-    ? "COMBINED STORYTELLING: Every single scene MUST START with a 'narration' line (intro point description). Then, follow up with a mix of 'dialogue' (character lines) and 'narration' (storytelling/action descriptions) throughout the scene to create a professional full-length script feel."
-    : formatVal === 'Narration'
-    ? "NARRATION FOCUS: The script should strictly feature a storyteller or narrator describing events and lessons (line type: 'narration')."
-    : "DIALOGUE FOCUS: The script should strictly emphasize active conversations between characters (line type: 'dialogue').";
-
-  const outlineContext = storyOutline ? `\nCRITICAL: FOLLOW THIS MASTER STORY OUTLINE EXACTLY:\n${JSON.stringify(storyOutline)}` : "";
-
-  let expectedChapters = 3;
-  const cleanDuration = String(durationVal).toLowerCase().trim();
-  if (cleanDuration.includes("5") && !cleanDuration.includes("15") && !cleanDuration.includes("25")) {
-    expectedChapters = 3;
-  } else if (cleanDuration.includes("10")) {
-    expectedChapters = 5;
-  } else if (cleanDuration.includes("15")) {
-    expectedChapters = 7;
-  } else if (cleanDuration.includes("20")) {
-    expectedChapters = 9;
-  } else if (cleanDuration.includes("25")) {
-    expectedChapters = 11;
-  } else if (cleanDuration.includes("30")) {
-    expectedChapters = 13;
-  } else {
-    const parsedMin = parseInt(cleanDuration) || 5;
-    expectedChapters = Math.max(3, Math.round(parsedMin / 2.5));
-  }
-
-  const systemInstruction = `You are a World-Class Cinematic Scriptwriter.
-Your task is to generate a complete, professional cartoon script in ${languageVal}.
-${outlineContext}
-
-STRICT GENERATION RULES:
-- FORMAT STYLE: ${formatRequirement}
-- ZERO PLAGIARISM POLICY: NEVER COPY specific names, dialogues, or unique sentences from the user's input.
-- SPIRIT SIMILARITY: Maintain the "Core Spirit" and "Plot Arc" of the user's story to ensure the result is exactly what they wanted.
-- TRANSFORMATIVE DIALOGUE: You MUST write entirely fresh dialogue in your own words (using regional dialects if applicable) to ensure the script is 100% original and safe for YouTube.
-- BENGALI DIALECT: If [LANGUAGE] is Bengali, use an expressive "Village Dialect" (আঞ্চলিক লোকজ ভাষা) for dialogues to make it sound catchy, funny, and cinematic. Use natural spoken tones, avoiding textbook formal Bengali.
-- Generate exactly ${expectedChapters} Chapters (each with exactly 4 Scenes).
-- For each Scene, provide:
-  1. A detailed visual "scene_description".
-  2. A list of "lines" (dialogue or SFX).
-  3. Realistic "duration" for each line (e.g. "2.4s").
-- Use "SFX NOTE" for non-spoken sounds with "(0s)".
-- "ai_background_prompt_bengali" must strictly describe the environment ONLY (no characters).
-
-TARGET JSON FORMAT:
-{
-  "story_title": "...",
-  "total_spoken_duration": "...",
-  "chapters": [
-    {
-      "chapter_number": Number,
-      "chapter_title": "...",
-      "scenes": [
-        {
-          "scene_number": Number,
-          "scene_description": "...",
-          "lines": [
-            { "character": "...", "text": "...", "duration": "...", "type": "dialogue | narration" }
-          ],
-          "voice_tone": "...",
-          "ai_background_prompt_bengali": "Bengali prompt for environment ONLY",
-          "character_movement": "...",
-          "camera_movement": "...",
-          "bgm_tag": "...",
-          "sfx_tag": "..."
-        }
-      ]
-    }
-  ]
-}`;
-
-  const prompt = `Generate a cinematic animation script based on:
-- [STORY_PLOT]: "${storyInputVal}"
-- [LANGUAGE]: "${languageVal}"
-- [DURATION]: "${durationVal}"
-
-Follow the story outline and character mapping. Generate exactly ${expectedChapters} chapters, with exactly 4 scenes each. Calculate realistic durations for each line.`;
-
-  return await runGeminiClientSide(apiKey, systemInstruction, prompt);
-};
-
 export default function App() {
   const [currentView, setCurrentView] = useState<View>('home');
   const [storyInput, setStoryInput] = useState('');
@@ -527,13 +264,6 @@ export default function App() {
   const [scriptLineText, setScriptLineText] = useState("");
   const [isPlayingFullScene, setIsPlayingFullScene] = useState(false);
 
-  // Custom API & Settings states for Netlify / Free custom domains
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [showKeyNeededModal, setShowKeyNeededModal] = useState(false);
-  const [showDomainActivationOverlay, setShowDomainActivationOverlay] = useState(false);
-  const [customApiUrl, setCustomApiUrl] = useState(localStorage.getItem('STORY_GENERATOR_API_URL') || '');
-  const [customGeminiKey, setCustomGeminiKey] = useState(localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || '');
-
   // Copy Feedback
   const [storyCopied, setStoryCopied] = useState(false);
   const [scriptCopied, setScriptCopied] = useState(false);
@@ -542,48 +272,6 @@ export default function App() {
   // Audio queue for full scene playback
   const audioQueueRef = useRef<StoryLine[]>([]);
   const isPlayingQueueRef = useRef(false);
-
-  const checkActivationStatus = async () => {
-    try {
-      const savedKey = localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || '';
-      
-      // If the browser already has a key, sync/register it to the backend so the backend is active for everyone!
-      if (savedKey.trim()) {
-        await fetch(getApiUrl('/api/save-global-key'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: savedKey.trim() })
-        }).catch(err => console.log("Silent server-side activation sync failed/skipped", err));
-      }
-
-      // Query active status from the central backend server
-      const res = await fetch(getApiUrl('/api/global-key-status'));
-      const statusData = await res.json();
-      
-      const currentHost = window.location.hostname;
-      const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
-      
-      // On non-development hosts like Netlify: if server reports not activated, show the overlay!
-      if (!isOriginalHost && !statusData.activated) {
-        setShowDomainActivationOverlay(true);
-      } else {
-        setShowDomainActivationOverlay(false);
-      }
-    } catch (err) {
-      console.warn("Could not check global activation status from backend, using localStorage fallback", err);
-      const savedKey = localStorage.getItem('STORY_GENERATOR_GEMINI_KEY');
-      const currentHost = window.location.hostname;
-      const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
-      if (!isOriginalHost && !savedKey) {
-        setShowDomainActivationOverlay(true);
-      }
-    }
-  };
-
-  // Run Custom Domain Activation check on mount
-  useEffect(() => {
-    checkActivationStatus();
-  }, []);
 
   // Local storage loading for history
   useEffect(() => {
@@ -794,27 +482,19 @@ export default function App() {
     setTimelineData(null);
 
     abortControllerRef.current = new AbortController();
-    const apiKey = localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || '';
 
     try {
-      let data;
-      if (apiKey) {
-        data = await runAnalyzePlotClient(apiKey, storyInput, language, category, duration);
-      } else {
-        const res = await fetch(getApiUrl('/api/analyze-plot'), {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': ''
-          },
-          body: JSON.stringify({ story_plot: storyInput, language, category, duration }),
-          signal: abortControllerRef.current.signal
-        });
+      // Step 1: Analyze / Mapping
+      const res = await fetch('/api/analyze-plot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ story_plot: storyInput, language, category, duration }),
+        signal: abortControllerRef.current.signal
+      });
 
-        if (!res.ok) throw new Error("তথ্য বিশ্লেষণ ব্যর্থ হয়েছে!");
-        data = await res.json();
-      }
+      if (!res.ok) throw new Error("তথ্য বিশ্লেষণ ব্যর্থ হয়েছে!");
       
+      const data = await res.json();
       setAnalysisData(data);
       setLoadingStep(2);
       
@@ -823,17 +503,8 @@ export default function App() {
       setIsLoading(false);
     } catch (err: any) {
       if (err.name === 'AbortError') return;
-      console.error(err);
+      alert(`বিশ্লেষণ ব্যর্থ হয়েছে: ${err.message}`);
       setIsLoading(false);
-      
-      const currentHost = window.location.hostname;
-      const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
-      
-      if (!isOriginalHost || err.message?.includes('fetch') || err.message?.includes('Failed to fetch')) {
-        setShowKeyNeededModal(true);
-      } else {
-        alert(`বিশ্লেষণ ব্যর্থ হয়েছে: ${err.message}`);
-      }
     }
   };
 
@@ -843,34 +514,24 @@ export default function App() {
     setLoadingStep(2);
     setIsTimelineMapped(false);
 
-    const apiKey = localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || '';
-
     try {
-      let data;
-      if (apiKey) {
-        data = await runMapTimelineClient(apiKey, storyInput, analysisData?.character_profiles, analysisData?.plot_analysis, duration, category, language);
-      } else {
-        const res = await fetch(getApiUrl('/api/map-timeline'), {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': ''
-          },
-          body: JSON.stringify({ 
-            story_plot: storyInput, 
-            language, 
-            category, 
-            duration,
-            character_profiles: analysisData?.character_profiles,
-            plot_analysis: analysisData?.plot_analysis
-          }),
-          signal: abortControllerRef.current?.signal
-        });
+      const res = await fetch('/api/map-timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          story_plot: storyInput, 
+          language, 
+          category, 
+          duration,
+          character_profiles: analysisData?.character_profiles,
+          plot_analysis: analysisData?.plot_analysis
+        }),
+        signal: abortControllerRef.current?.signal
+      });
 
-        if (!res.ok) throw new Error("টাইমলাইন ম্যাপিং ব্যর্থ হয়েছে!");
-        data = await res.json();
-      }
+      if (!res.ok) throw new Error("টাইমলাইন ম্যাপিং ব্যর্থ হয়েছে!");
       
+      const data = await res.json();
       setTimelineData(data);
       setLoadingStep(3);
       
@@ -879,17 +540,8 @@ export default function App() {
       setIsLoading(false);
     } catch (err: any) {
       if (err.name === 'AbortError') return;
-      console.error(err);
+      alert(`ম্যাপিং ব্যর্থ হয়েছে: ${err.message}`);
       setIsLoading(false);
-
-      const currentHost = window.location.hostname;
-      const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
-      
-      if (!isOriginalHost || err.message?.includes('fetch') || err.message?.includes('Failed to fetch')) {
-        setShowKeyNeededModal(true);
-      } else {
-        alert(`ম্যাপিং ব্যর্থ হয়েছে: ${err.message}`);
-      }
     }
   };
 
@@ -899,38 +551,32 @@ export default function App() {
     setLoadingStep(4);
     setIsFinalGenStarted(true);
 
-    const apiKey = localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || '';
-
     try {
-      let data;
-      if (apiKey) {
-        data = await runGenerateScriptClient(apiKey, storyInput, language, format, category, duration, timelineData);
-      } else {
-        const response = await fetch(getApiUrl('/api/generate-script'), {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': ''
-          },
-          body: JSON.stringify({ 
-            story_plot: storyInput, 
-            language, 
-            format, 
-            category, 
-            duration,
-            story_outline: timelineData 
-          }),
-          signal: abortControllerRef.current?.signal
-        });
+      // Step 3: Script generation
+      const response = await fetch('/api/generate-script', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          story_plot: storyInput, 
+          language, 
+          format, 
+          category, 
+          duration,
+          story_outline: timelineData 
+        }),
+        signal: abortControllerRef.current?.signal
+      });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || 'গল্প স্ক্রিপ্ট তৈরিতে ত্রুটি দেখা দিয়েছে!');
-        }
-        data = await response.json();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'গল্প স্ক্রিপ্ট তৈরিতে ত্রুটি দেখা দিয়েছে!');
       }
 
+      const data = await response.json();
       setLoadingStep(4);
+
       await new Promise(resolve => setTimeout(resolve, 800));
 
       const finalProduct: Production = {
@@ -955,16 +601,8 @@ export default function App() {
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       console.error(err);
+      alert(`প্রোডাকশন ব্যর্থ হয়েছে: ${err.message || "সার্ভার এরর"}. অনুগ্রহ করে আবার চেষ্টা করুন।`);
       setIsLoading(false);
-
-      const currentHost = window.location.hostname;
-      const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
-      
-      if (!isOriginalHost || err.message?.includes('fetch') || err.message?.includes('Failed to fetch')) {
-        setShowKeyNeededModal(true);
-      } else {
-        alert(`প্রোডাকশন ব্যর্থ হয়েছে: ${err.message || "সার্ভার এরর"}. অনুগ্রহ করে আবার চেষ্টা করুন।`);
-      }
     }
   };
 
@@ -1018,11 +656,10 @@ export default function App() {
     // If browser TTS is not available or failed, fall back to high-quality server-side model-based synthesized audio!
     setPlayingId(partIdx as any);
     try {
-      const res = await fetch(getApiUrl('/api/generate-voice'), {
+      const res = await fetch('/api/generate-voice', {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || ''
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
           text: text, 
@@ -1186,7 +823,7 @@ export default function App() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-lg font-black tracking-tighter uppercase leading-none text-white font-display">STORY GENERATOR</h1>
+              <h1 className="text-lg font-black tracking-tighter uppercase leading-none text-white font-display">PROMPT GEN AI</h1>
               <span 
                 className="text-[8px] px-1.5 py-0.5 rounded font-black transition-all duration-500"
                 style={{
@@ -1226,18 +863,6 @@ export default function App() {
             }}
           >
             <History className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => setShowSettingsModal(true)} 
-            className="w-11 h-11 rounded-[16px] flex items-center justify-center transition-all duration-300 border"
-            style={{
-              backgroundColor: showSettingsModal ? `${activeTheme.primary}20` : 'rgba(255,255,255,0.05)',
-              borderColor: showSettingsModal ? activeTheme.primary : 'rgba(255,255,255,0.05)',
-              color: showSettingsModal ? '#ffffff' : 'rgba(255,255,255,0.7)'
-            }}
-            title="API Settings"
-          >
-            <Settings className="w-4 h-4" />
           </button>
         </div>
       </header>
@@ -1627,7 +1252,7 @@ export default function App() {
                                       <div className="text-[10px] font-bold text-white">{char.name}</div>
                                       <div className="text-[8px] text-white/40">{char.role}</div>
                                     </div>
-                                    <div className="flex items-center gap-1.5 opacity-100 transition-opacity">
+                                    <div className="flex items-center gap-1.5 opacity-0 group-hover/char:opacity-100 transition-opacity">
                                       <button 
                                         onClick={() => { setEditingCharIdx(i); setTempCharName(char.name); }}
                                         className="p-1 bg-white/10 hover:bg-white/20 rounded-md border border-white/5 transition-colors"
@@ -2446,337 +2071,6 @@ export default function App() {
           </button>
         </nav>
       )}
-
-      {/* Developer API & Netlify Settings Modal */}
-      <AnimatePresence>
-        {showSettingsModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[#050505]/95 backdrop-blur-xl z-50 flex flex-col p-6 overflow-y-auto max-w-md mx-auto border-x border-white/10"
-          >
-            <div className="flex items-center justify-between pb-5 border-b border-white/5">
-              <div className="flex items-center gap-2">
-                <Settings className="w-5 h-5 animate-spin-slow" style={{ color: activeTheme.primary }} />
-                <div>
-                  <h2 className="text-sm font-black uppercase tracking-wider text-white">ডোমেইন ও এপিআই সেটিংস</h2>
-                  <p className="text-[9px] tracking-wide text-white/40">Domain / Netlify Setup & Free API Keys</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowSettingsModal(false)}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs text-white/60 hover:text-white"
-              >
-                বন্ধ করুন (Close)
-              </button>
-            </div>
-
-            <div className="mt-5 space-y-6 flex-1">
-              
-              {/* API URL Override section */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7c79e5] block">
-                  🌐 ব্যাকএন্ড এপিআই সার্ভার রুট (API Routing)
-                </label>
-                <p className="text-[10px] text-white/50 leading-relaxed">
-                  Netlify বা অন্য কোথাও ডোমেইন পরিবর্তন করলে এটি অটোমেটিক আমাদের অ্যাক্টিভ ক্লাউড রান সার্ভার ব্যবহার করবে। আপনি কাস্টম ব্যাকএন্ড সার্ভার ব্যবহার করতে চাইলে নিচে ইউআরএল দিন:
-                </p>
-                <div className="flex gap-2">
-                  <input 
-                    type="text"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
-                    placeholder="যেমনঃ https://my-server.com"
-                    value={customApiUrl}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setCustomApiUrl(val);
-                      if (val.trim()) {
-                        let normalized = val.trim();
-                        if (!/^https?:\/\//i.test(normalized)) {
-                          normalized = `https://${normalized}`;
-                        }
-                        localStorage.setItem('STORY_GENERATOR_API_URL', normalized);
-                      } else {
-                        localStorage.removeItem('STORY_GENERATOR_API_URL');
-                      }
-                    }}
-                  />
-                  <button 
-                    onClick={() => {
-                      setCustomApiUrl('');
-                      localStorage.removeItem('STORY_GENERATOR_API_URL');
-                    }}
-                    className="px-3 py-2 bg-white/5 border border-white/10 hover:bg-white/10 text-xs text-white/50 rounded-xl"
-                    title="Reset to default background server"
-                  >
-                    Reset
-                  </button>
-                </div>
-                <div className="bg-white/3 border border-white/5 p-2 rounded-lg text-[9px] text-white/40 font-mono">
-                  সক্রিয় রুট: <span className="text-emerald-400">{getApiUrl('') || 'Self / Local'}</span>
-                </div>
-              </div>
-
-              {/* Gemini Key section */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7c79e5] block">
-                  🔑 কাস্টম জেমিনি এপিআই কি (Custom Gemini Key)
-                </label>
-                <p className="text-[10px] text-white/50 leading-relaxed">
-                  একেবারে ফ্রিতে এবং আনলিমিটেড কার্টুন স্ক্রিপ্ট জেনারেট করতে চাইলে আপনার নিজের একটি ফ্রি Gemini API Key ব্যবহার করতে পারেন। এটি আপনার ব্রাউজার-এই সুরক্ষিতভাবে সংরক্ষিত থাকবে।
-                </p>
-                <input 
-                  type="password"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
-                  placeholder="আপনার AI Studio Gemini API Key দিন..."
-                  value={customGeminiKey}
-                  onChange={(e) => setCustomGeminiKey(e.target.value)}
-                />
-                <p className="text-[9px] text-white/35">
-                  * এপিআই কি ফাঁকা রাখলে আমাদের ইন্টিগ্রেটেড ফ্রি ডিস্ট্রিবিউটেড কি-পুল স্বয়ংক্রিয়ভাবে কাজ চালিয়ে যাবে।
-                </p>
-              </div>
-
-              {/* Netlify Guide panel */}
-              <div className="bg-gradient-to-br from-[#121216]/50 to-transparent border border-white/5 rounded-2xl p-4 space-y-3">
-                <h4 className="text-[11px] font-black text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-[#7c79e5]" />
-                  Netlify ডোমেইন ও ফ্রি হোস্টিং গাইডবুক
-                </h4>
-                <div className="space-y-2 text-[10px] text-white/60 leading-relaxed">
-                  <div className="flex gap-2">
-                    <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center font-bold text-[9px]">১</span>
-                    <p>
-                      <strong>_redirects ফাইলঃ</strong> আপনার সুবিধার জন্য আমরা ইতিমধ্যে <code>/public/_redirects</code> ফাইল কনফিগার করে দিয়েছি। এটি সমস্ত ব্যাকএন্ড কুয়েরিকে প্রক্সি করবে।
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center font-bold text-[9px]">২</span>
-                    <p>
-                      <strong>ডিপ্লয় প্রসেসঃ</strong> এই কোডটি Netlify-তে ড্র্যাগ অ্যান্ড ড্রপ বা গিটহাবের মাধ্যমে সরাসরি ডিপ্লয় করে নিন। কোনো অতিরিক্ত কুয়েরি বা ট্র্যাশ বিল্ড হবে না।
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center font-bold text-[9px]">৩</span>
-                    <p>
-                      <strong>১০০% ফ্রি লাইফটাইমঃ</strong> কোনো ডাটাবেজ ইন্টিগ্রেশানের ঝামেলা ছাড়াই সম্পূর্ণ অ্যাপের ক্যাশ ও হিস্ট্রি ব্রাউজারের লোকাল স্টোরেজে জমা থাকবে ফলে আপনার জিরো ডোমেইন খরচেই চলবে!
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action save button */}
-              <button 
-                onClick={() => {
-                  if (customApiUrl.trim()) {
-                    localStorage.setItem('STORY_GENERATOR_API_URL', customApiUrl.trim());
-                  } else {
-                    localStorage.removeItem('STORY_GENERATOR_API_URL');
-                  }
-
-                  if (customGeminiKey.trim()) {
-                    localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', customGeminiKey.trim());
-                  } else {
-                    localStorage.removeItem('STORY_GENERATOR_GEMINI_KEY');
-                  }
-                  setShowSettingsModal(false);
-                }}
-                className="w-full py-3 rounded-xl text-xs font-black uppercase text-white tracking-widest transition-all duration-300 transform active:scale-[0.98] shadow-lg"
-                style={{
-                  background: `linear-gradient(135deg, ${activeTheme.primary}ee 0%, ${activeTheme.primary}aa 100%)`,
-                  boxShadow: `0 4px 20px ${activeTheme.primary}25`
-                }}
-              >
-                সেটিংস সংরক্ষণ করুন (Save Configuration)
-              </button>
-
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Dynamic Key Required / Setup Guide Modal */}
-      <AnimatePresence>
-        {showKeyNeededModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[#050505]/95 backdrop-blur-xl z-50 flex items-center justify-center p-4 border border-white/5"
-          >
-            <div className="bg-[#121216] border border-white/10 rounded-[28px] max-w-sm w-full p-6 space-y-5 shadow-2xl relative">
-              <div className="flex flex-col items-center text-center space-y-3">
-                <div className="w-14 h-14 rounded-full bg-[#7c79e5]/10 border border-[#7c79e5]/25 flex items-center justify-center text-2xl animate-pulse">
-                  🔑
-                </div>
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-white">ডোমেইন পরিবর্তন ও ফ্রি এপিআই এলার্ট</h3>
-                  <p className="text-[10px] text-[#7c79e5]/80 font-mono mt-1">Netlify Config / API Key Required</p>
-                </div>
-                <p className="text-[11px] text-white/70 leading-relaxed pt-2">
-                  আপনি এই অ্যাপটি আমাদের ডেভেলপমেন্ট সার্ভার ছাড়া অন্য কোনো ডোমেইনে (যেমনঃ <strong>Netlify</strong>) চালাচ্ছেন। 
-                </p>
-                <p className="text-[11px] text-white/50 leading-relaxed">
-                  নিরাপত্তা বিধিনিষেধ এবং ফ্রিতে আনলিমিটেড সার্ভিস সচল রাখতে আপনার ব্রাউজারে একটি <strong>ফ্রি Gemini API Key</strong> সংরক্ষণ করে নিন। এতে সম্পূর্ণ অ্যাপটি আপনার ডোমেনে ১০০% ফ্রিতে আজীবন কাজ করবে!
-                </p>
-              </div>
-
-              <div className="space-y-4 pt-2">
-                <div className="space-y-1">
-                  <span className="text-[9px] uppercase tracking-wider text-white/40 block font-bold">১ সেকেন্ডে ফ্রি এপিআই কি নিন:</span>
-                  <a 
-                    href="https://aistudio.google.com/" 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="block text-center py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-bold text-[#9f9df8] transition-all"
-                  >
-                    👉 Get Free AI Studio Gemini Key
-                  </a>
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-[9px] uppercase tracking-wider text-white/40 block font-bold">এখানে আপনার এপিআই কি পেস্ট করুন:</span>
-                  <input 
-                    type="password"
-                    placeholder="AI Studio API Key (AIzaSy...)"
-                    className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-3 py-2.5 text-xs text-center focus:outline-none focus:border-[#7c79e5]/50 font-mono"
-                    value={customGeminiKey}
-                    onChange={(e) => {
-                      setCustomGeminiKey(e.target.value);
-                      localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', e.target.value.trim());
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button 
-                  onClick={() => setShowKeyNeededModal(false)}
-                  className="flex-1 py-2.5 bg-white/5 border border-white/5 hover:bg-white/10 rounded-xl text-[10px] font-bold uppercase tracking-wider text-white/60 transition-all text-center"
-                >
-                  বন্ধ করুন (Close)
-                </button>
-                <button 
-                  onClick={() => {
-                    if (customGeminiKey.trim()) {
-                      localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', customGeminiKey.trim());
-                      setShowKeyNeededModal(false);
-                      // Try re-triggering analysis automatically!
-                      handleStartAnalysis();
-                    } else {
-                      alert("অনুগ্রহ করে একটি সঠিক API Key দিন অথবা বন্ধ করুন!");
-                    }
-                  }}
-                  className="flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-white transition-all text-center"
-                  style={{
-                    background: `linear-gradient(135deg, ${activeTheme.primary}ee 0%, ${activeTheme.primary}aa 100%)`
-                  }}
-                >
-                  সংরক্ষণ ও কাজ করুন
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Netlify Initial App Activation Overlay */}
-      <AnimatePresence>
-        {showDomainActivationOverlay && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[#050505]/98 backdrop-blur-2xl z-50 flex items-center justify-center p-4 border border-white/5"
-          >
-            <div className="bg-[#121216] border border-white/10 rounded-[30px] max-w-sm w-full p-6 space-y-6 shadow-2xl relative">
-              <div className="flex flex-col items-center text-center space-y-3">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-3xl animate-pulse">
-                  🚀
-                </div>
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-white">Netlify ডোমেইন অ্যাক্টিভেশন</h3>
-                  <p className="text-[10px] text-emerald-400 font-mono mt-1">Story Generator Netlify Setup</p>
-                </div>
-                <p className="text-[11px] text-white/70 leading-relaxed pt-2">
-                  ধন্যবাদ! আপনি সফলভাবে অ্যাপটি আপনার কাস্টম ডোমেইনে (<strong>Netlify</strong>) সেটআপ করেছেন।
-                </p>
-                <p className="text-[11px] text-white/50 leading-relaxed">
-                  নিরাপদ ব্যাকএন্ড রুট এবং ফ্রিতে আনলিমিটেড কার্টুন স্ক্রিপ্ট সচল রাখতে প্রথমবার ১টি <strong>ফ্রি Gemini API Key</strong> দিয়ে প্রবেশ করুন।
-                </p>
-                <p className="text-[10px] text-emerald-400 font-medium bg-emerald-500/5 px-3 py-1.5 rounded-xl border border-emerald-500/10 inline-block leading-normal">
-                  যে কেউ প্রথমবার মাত্র ১টি Key সেট করলেই, এই ব্রাউজারে এটি লাইফটাইম আজীবনের জন্য সেভ থাকবে ও সবাই ফ্রিতে চালাতে পারবে!
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <span className="text-[9px] uppercase tracking-wider text-white/40 block font-bold">১০ সেকেন্ডে ফ্রি এপিআই কি নিন:</span>
-                  <a 
-                    href="https://aistudio.google.com/" 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="block text-center py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl text-[10px] font-bold text-emerald-400 transition-all"
-                  >
-                    👉 Get Free API Key (AI Studio)
-                  </a>
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-[9px] uppercase tracking-wider text-white/40 block font-bold">এখানে আপনার এপিআই কি দিন:</span>
-                  <input 
-                    type="password"
-                    placeholder="যেমনঃ AIzaSy..."
-                    className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-3 py-2.5 text-xs text-center focus:outline-none focus:border-emerald-500/50 font-mono"
-                    value={customGeminiKey}
-                    onChange={(e) => {
-                      setCustomGeminiKey(e.target.value);
-                      localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', e.target.value.trim());
-                    }}
-                  />
-                </div>
-              </div>
-
-              <button 
-                onClick={() => {
-                  if (customGeminiKey.trim()) {
-                    fetch(getApiUrl('/api/save-global-key'), {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ key: customGeminiKey.trim() })
-                    }).then((res) => res.json())
-                      .then((data) => {
-                        if (data.success) {
-                          localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', customGeminiKey.trim());
-                          setShowDomainActivationOverlay(false);
-                          alert("অভিনন্দন! ডোমেইলটি সফলভাবে অ্যাক্টিভ হয়েছে। এখন যে কেউ ফ্রিতে এটি চালাতে পারবে কোনো ঝামেলা ছাড়াই!");
-                        } else {
-                          alert(`অ্যাক্টিভেশনে ত্রুটি: ${data.error || "ভুল এপিআই কী"}`);
-                        }
-                      }).catch((err) => {
-                        console.error("Endpoint saving failed", err);
-                        // Safe fallback inside browser local storage
-                        localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', customGeminiKey.trim());
-                        setShowDomainActivationOverlay(false);
-                        alert("সার্ভার ইন্টিগ্রেশন বা ব্রাউজার অফলাইন থাকা সত্ত্বেও আপনার ব্রাউজারে এটি অ্যাক্টিভ করা হয়েছে!");
-                      });
-                  } else {
-                    alert("দয়া করে অ্যাপ অ্যাক্টিভ করতে একটি সঠিক Gemini API Key দান করুন!");
-                  }
-                }}
-                className="w-full py-3 rounded-xl text-xs font-black uppercase text-white tracking-wider transition-all text-center shadow-lg"
-                style={{
-                  background: `linear-gradient(135deg, ${activeTheme.primary} 0%, rgba(16, 185, 129, 0.8) 100%)`,
-                  boxShadow: `0 4px 15px ${activeTheme.primary}20`
-                }}
-              >
-                সংরক্ষণ ও অ্যাপ সচল করুন (Save & Activate)
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
     </div>
   );
