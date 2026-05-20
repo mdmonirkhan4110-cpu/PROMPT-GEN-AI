@@ -12,6 +12,17 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
+  // Allow cross-origin requests from custom hosting like Netlify or local dev environments
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, x-gemini-api-key");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   // Helper to run a Gemini task with auto-retry and auto-rotation of up to 4 keys
   async function executeWithKeyRotation<T>(
     req: express.Request,

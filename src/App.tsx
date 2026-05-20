@@ -214,6 +214,26 @@ const getCategoryTheme = (cat: string) => {
   }
 };
 
+const getApiUrl = (endpoint: string): string => {
+  // 1. Check if there is an override in localStorage
+  const savedApiUrl = localStorage.getItem('STORY_GENERATOR_API_URL');
+  if (savedApiUrl) {
+    return `${savedApiUrl.replace(/\/$/, '')}${endpoint}`;
+  }
+  
+  // 2. Detect if origin is Netlify or any non-original custom host
+  const currentHost = window.location.hostname;
+  const isOriginalHost = currentHost.includes('run.app') || currentHost === 'localhost' || currentHost === '127.0.0.1';
+  
+  // If the user deployed to Netlify and didn't configure a proxy or wants robust direct queries:
+  if (!isOriginalHost && !window.location.port) {
+    const defaultBackendUrl = 'https://ais-pre-qeatm6ccr5dn35vzdkzq2w-88171425959.asia-southeast1.run.app';
+    return `${defaultBackendUrl}${endpoint}`;
+  }
+  
+  return endpoint;
+};
+
 export default function App() {
   const [currentView, setCurrentView] = useState<View>('home');
   const [storyInput, setStoryInput] = useState('');
@@ -263,6 +283,11 @@ export default function App() {
   const [editingScriptLine, setEditingScriptLine] = useState<{sceneIdx: number, lineIdx: number} | null>(null);
   const [scriptLineText, setScriptLineText] = useState("");
   const [isPlayingFullScene, setIsPlayingFullScene] = useState(false);
+
+  // Custom API & Settings states for Netlify / Free custom domains
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [customApiUrl, setCustomApiUrl] = useState(localStorage.getItem('STORY_GENERATOR_API_URL') || '');
+  const [customGeminiKey, setCustomGeminiKey] = useState(localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || '');
 
   // Copy Feedback
   const [storyCopied, setStoryCopied] = useState(false);
@@ -485,9 +510,12 @@ export default function App() {
 
     try {
       // Step 1: Analyze / Mapping
-      const res = await fetch('/api/analyze-plot', {
+      const res = await fetch(getApiUrl('/api/analyze-plot'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || ''
+        },
         body: JSON.stringify({ story_plot: storyInput, language, category, duration }),
         signal: abortControllerRef.current.signal
       });
@@ -515,9 +543,12 @@ export default function App() {
     setIsTimelineMapped(false);
 
     try {
-      const res = await fetch('/api/map-timeline', {
+      const res = await fetch(getApiUrl('/api/map-timeline'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || ''
+        },
         body: JSON.stringify({ 
           story_plot: storyInput, 
           language, 
@@ -553,10 +584,11 @@ export default function App() {
 
     try {
       // Step 3: Script generation
-      const response = await fetch('/api/generate-script', {
+      const response = await fetch(getApiUrl('/api/generate-script'), {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || ''
         },
         body: JSON.stringify({ 
           story_plot: storyInput, 
@@ -656,10 +688,11 @@ export default function App() {
     // If browser TTS is not available or failed, fall back to high-quality server-side model-based synthesized audio!
     setPlayingId(partIdx as any);
     try {
-      const res = await fetch('/api/generate-voice', {
+      const res = await fetch(getApiUrl('/api/generate-voice'), {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': localStorage.getItem('STORY_GENERATOR_GEMINI_KEY') || ''
         },
         body: JSON.stringify({ 
           text: text, 
@@ -823,7 +856,7 @@ export default function App() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-lg font-black tracking-tighter uppercase leading-none text-white font-display">PROMPT GEN AI</h1>
+              <h1 className="text-lg font-black tracking-tighter uppercase leading-none text-white font-display">STORY GENERATOR</h1>
               <span 
                 className="text-[8px] px-1.5 py-0.5 rounded font-black transition-all duration-500"
                 style={{
@@ -863,6 +896,18 @@ export default function App() {
             }}
           >
             <History className="w-4 h-4" />
+          </button>
+          <button 
+            onClick={() => setShowSettingsModal(true)} 
+            className="w-11 h-11 rounded-[16px] flex items-center justify-center transition-all duration-300 border"
+            style={{
+              backgroundColor: showSettingsModal ? `${activeTheme.primary}20` : 'rgba(255,255,255,0.05)',
+              borderColor: showSettingsModal ? activeTheme.primary : 'rgba(255,255,255,0.05)',
+              color: showSettingsModal ? '#ffffff' : 'rgba(255,255,255,0.7)'
+            }}
+            title="API Settings"
+          >
+            <Settings className="w-4 h-4" />
           </button>
         </div>
       </header>
@@ -2071,6 +2116,143 @@ export default function App() {
           </button>
         </nav>
       )}
+
+      {/* Developer API & Netlify Settings Modal */}
+      <AnimatePresence>
+        {showSettingsModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-[#050505]/95 backdrop-blur-xl z-50 flex flex-col p-6 overflow-y-auto max-w-md mx-auto border-x border-white/10"
+          >
+            <div className="flex items-center justify-between pb-5 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 animate-spin-slow" style={{ color: activeTheme.primary }} />
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-wider text-white">ডোমেইন ও এপিআই সেটিংস</h2>
+                  <p className="text-[9px] tracking-wide text-white/40">Domain / Netlify Setup & Free API Keys</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowSettingsModal(false)}
+                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs text-white/60 hover:text-white"
+              >
+                বন্ধ করুন (Close)
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-6 flex-1">
+              
+              {/* API URL Override section */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7c79e5] block">
+                  🌐 ব্যাকএন্ড এপিআই সার্ভার রুট (API Routing)
+                </label>
+                <p className="text-[10px] text-white/50 leading-relaxed">
+                  Netlify বা অন্য কোথাও ডোমেইন পরিবর্তন করলে এটি অটোমেটিক আমাদের অ্যাক্টিভ ক্লাউড রান সার্ভার ব্যবহার করবে। আপনি কাস্টম ব্যাকএন্ড সার্ভার ব্যবহার করতে চাইলে নিচে ইউআরএল দিন:
+                </p>
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                    placeholder="যেমনঃ https://my-server.com"
+                    value={customApiUrl}
+                    onChange={(e) => setCustomApiUrl(e.target.value)}
+                  />
+                  <button 
+                    onClick={() => {
+                      setCustomApiUrl('');
+                      localStorage.removeItem('STORY_GENERATOR_API_URL');
+                    }}
+                    className="px-3 py-2 bg-white/5 border border-white/10 hover:bg-white/10 text-xs text-white/50 rounded-xl"
+                    title="Reset to default background server"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <div className="bg-white/3 border border-white/5 p-2 rounded-lg text-[9px] text-white/40 font-mono">
+                  সক্রিয় রুট: <span className="text-emerald-400">{customApiUrl || 'https://ais-pre-qeatm6ccr5dn35vzdkzq2w-8... (Default)'}</span>
+                </div>
+              </div>
+
+              {/* Gemini Key section */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#7c79e5] block">
+                  🔑 কাস্টম জেমিনি এপিআই কি (Custom Gemini Key)
+                </label>
+                <p className="text-[10px] text-white/50 leading-relaxed">
+                  একেবারে ফ্রিতে এবং আনলিমিটেড কার্টুন স্ক্রিপ্ট জেনারেট করতে চাইলে আপনার নিজের একটি ফ্রি Gemini API Key ব্যবহার করতে পারেন। এটি আপনার ব্রাউজার-এই সুরক্ষিতভাবে সংরক্ষিত থাকবে।
+                </p>
+                <input 
+                  type="password"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                  placeholder="আপনার AI Studio Gemini API Key দিন..."
+                  value={customGeminiKey}
+                  onChange={(e) => setCustomGeminiKey(e.target.value)}
+                />
+                <p className="text-[9px] text-white/35">
+                  * এপিআই কি ফাঁকা রাখলে আমাদের ইন্টিগ্রেটেড ফ্রি ডিস্ট্রিবিউটেড কি-পুল স্বয়ংক্রিয়ভাবে কাজ চালিয়ে যাবে।
+                </p>
+              </div>
+
+              {/* Netlify Guide panel */}
+              <div className="bg-gradient-to-br from-[#121216]/50 to-transparent border border-white/5 rounded-2xl p-4 space-y-3">
+                <h4 className="text-[11px] font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#7c79e5]" />
+                  Netlify ডোমেইন ও ফ্রি হোস্টিং গাইডবুক
+                </h4>
+                <div className="space-y-2 text-[10px] text-white/60 leading-relaxed">
+                  <div className="flex gap-2">
+                    <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center font-bold text-[9px]">১</span>
+                    <p>
+                      <strong>_redirects ফাইলঃ</strong> আপনার সুবিধার জন্য আমরা ইতিমধ্যে <code>/public/_redirects</code> ফাইল কনফিগার করে দিয়েছি। এটি সমস্ত ব্যাকএন্ড কুয়েরিকে প্রক্সি করবে।
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center font-bold text-[9px]">২</span>
+                    <p>
+                      <strong>ডিপ্লয় প্রসেসঃ</strong> এই কোডটি Netlify-তে ড্র্যাগ অ্যান্ড ড্রপ বা গিটহাবের মাধ্যমে সরাসরি ডিপ্লয় করে নিন। কোনো অতিরিক্ত কুয়েরি বা ট্র্যাশ বিল্ড হবে না।
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center font-bold text-[9px]">৩</span>
+                    <p>
+                      <strong>১০০% ফ্রি লাইফটাইমঃ</strong> কোনো ডাটাবেজ ইন্টিগ্রেশানের ঝামেলা ছাড়াই সম্পূর্ণ অ্যাপের ক্যাশ ও হিস্ট্রি ব্রাউজারের লোকাল স্টোরেজে জমা থাকবে ফলে আপনার জিরো ডোমেইন খরচেই চলবে!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action save button */}
+              <button 
+                onClick={() => {
+                  if (customApiUrl.trim()) {
+                    localStorage.setItem('STORY_GENERATOR_API_URL', customApiUrl.trim());
+                  } else {
+                    localStorage.removeItem('STORY_GENERATOR_API_URL');
+                  }
+
+                  if (customGeminiKey.trim()) {
+                    localStorage.setItem('STORY_GENERATOR_GEMINI_KEY', customGeminiKey.trim());
+                  } else {
+                    localStorage.removeItem('STORY_GENERATOR_GEMINI_KEY');
+                  }
+                  setShowSettingsModal(false);
+                }}
+                className="w-full py-3 rounded-xl text-xs font-black uppercase text-white tracking-widest transition-all duration-300 transform active:scale-[0.98] shadow-lg"
+                style={{
+                  background: `linear-gradient(135deg, ${activeTheme.primary}ee 0%, ${activeTheme.primary}aa 100%)`,
+                  boxShadow: `0 4px 20px ${activeTheme.primary}25`
+                }}
+              >
+                সেটিংস সংরক্ষণ করুন (Save Configuration)
+              </button>
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
