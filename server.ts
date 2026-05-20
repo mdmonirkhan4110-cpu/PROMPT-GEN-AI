@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Modality } from "@google/genai";
 import dotenv from "dotenv";
@@ -25,6 +26,15 @@ async function startServer() {
 
   // Keep track of any globally activated Gemini API key
   let globalGeminiKey = "";
+  const keyFilePath = path.join(process.cwd(), "activated_key.txt");
+  if (fs.existsSync(keyFilePath)) {
+    try {
+      globalGeminiKey = fs.readFileSync(keyFilePath, "utf8").trim();
+      console.log(`Loaded persisted activation key starting with ${globalGeminiKey.substring(0, 6)}...`);
+    } catch (err) {
+      console.error("Error reading persisted activation key:", err);
+    }
+  }
 
   // Helper to run a Gemini task with auto-retry and auto-rotation of up to 4 keys
   async function executeWithKeyRotation<T>(
@@ -95,12 +105,17 @@ async function startServer() {
     res.json({ activated: hasGlobal || envKeysExist });
   });
 
-  // API Endpoint to save a global key in memory
+  // API Endpoint to save a global key in memory and persist on disk
   app.post("/api/save-global-key", (req, res) => {
     const { key } = req.body;
     if (key && typeof key === "string" && key.trim() !== "") {
       globalGeminiKey = key.trim();
-      console.log(`Global activation successful! API Key starting with ${globalGeminiKey.substring(0,6)}... has been set dynamically.`);
+      try {
+        fs.writeFileSync(keyFilePath, globalGeminiKey, "utf8");
+        console.log(`Global activation persisted to file successfully! API Key starting with ${globalGeminiKey.substring(0,6)}... has been set dynamically.`);
+      } catch (err) {
+        console.error("Failed to write persisted activation key to disk (Read-Only FS?):", err);
+      }
       return res.json({ success: true, message: "Successfully activated the server for everyone!" });
     }
     res.status(400).json({ error: "Invalid API Key format or key is empty" });

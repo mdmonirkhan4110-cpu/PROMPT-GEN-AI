@@ -218,7 +218,11 @@ const getApiUrl = (endpoint: string): string => {
   // 1. Check if there is an override in localStorage
   const savedApiUrl = localStorage.getItem('STORY_GENERATOR_API_URL');
   if (savedApiUrl) {
-    return `${savedApiUrl.replace(/\/$/, '')}${endpoint}`;
+    let urlBase = savedApiUrl.trim();
+    if (urlBase && !/^https?:\/\//i.test(urlBase)) {
+      urlBase = `https://${urlBase}`;
+    }
+    return `${urlBase.replace(/\/$/, '')}${endpoint}`;
   }
   
   // 2. Detect if origin is Netlify or any non-original custom host
@@ -2484,7 +2488,19 @@ export default function App() {
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
                     placeholder="যেমনঃ https://my-server.com"
                     value={customApiUrl}
-                    onChange={(e) => setCustomApiUrl(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomApiUrl(val);
+                      if (val.trim()) {
+                        let normalized = val.trim();
+                        if (!/^https?:\/\//i.test(normalized)) {
+                          normalized = `https://${normalized}`;
+                        }
+                        localStorage.setItem('STORY_GENERATOR_API_URL', normalized);
+                      } else {
+                        localStorage.removeItem('STORY_GENERATOR_API_URL');
+                      }
+                    }}
                   />
                   <button 
                     onClick={() => {
@@ -2498,7 +2514,7 @@ export default function App() {
                   </button>
                 </div>
                 <div className="bg-white/3 border border-white/5 p-2 rounded-lg text-[9px] text-white/40 font-mono">
-                  সক্রিয় রুট: <span className="text-emerald-400">{customApiUrl || 'https://ais-pre-qeatm6ccr5dn35vzdkzq2w-8... (Default)'}</span>
+                  সক্রিয় রুট: <span className="text-emerald-400">{getApiUrl('') || 'Self / Local'}</span>
                 </div>
               </div>
 
